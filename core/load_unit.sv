@@ -211,6 +211,8 @@ module load_unit
   assign req_port_o.address_tag   = paddr_i[CVA6Cfg.DCACHE_TAG_WIDTH     +
                                               CVA6Cfg.DCACHE_INDEX_WIDTH-1 :
                                               CVA6Cfg.DCACHE_INDEX_WIDTH];
+  // assign dynamic coherence specialization
+  assign req_port_o.dcs_data = lsu_ctrl_i.dcs_data;
   // request id = index of the load buffer's entry
   assign req_port_o.data_id = ldbuf_windex;
   // user field not used

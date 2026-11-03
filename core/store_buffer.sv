@@ -46,6 +46,7 @@ module store_buffer
     input logic [CVA6Cfg.XLEN-1:0] data_i,  // data which is placed in the queue
     input logic [(CVA6Cfg.XLEN/8)-1:0] be_i,  // byte enable in
     input logic [1:0] data_size_i,  // type of request we are making (e.g.: bytes to write)
+    input  dcs_data_t dcs_data_i,
     input cbo_t cbo_op_i,  // type of cache block operation
 
     // D$ interface
@@ -61,6 +62,7 @@ module store_buffer
     logic [CVA6Cfg.XLEN-1:0] data;
     logic [(CVA6Cfg.XLEN/8)-1:0] be;
     logic [1:0] data_size;
+    dcs_data_t dcs_data;
     cbo_t cbo_op;
     logic valid;  // this entry is valid, we need this for checking if the address offset matches
     logic wait_rvalid;  // need to wait for rvalid...
@@ -99,6 +101,7 @@ module store_buffer
       speculative_queue_n[speculative_write_pointer_q].data = data_i;
       speculative_queue_n[speculative_write_pointer_q].be = be_i;
       speculative_queue_n[speculative_write_pointer_q].data_size = data_size_i;
+      speculative_queue_n[speculative_write_pointer_q].dcs_data  = dcs_data_i;
       speculative_queue_n[speculative_write_pointer_q].valid = 1'b1;
       speculative_queue_n[speculative_write_pointer_q].cbo_op = cbo_op_i;
       speculative_queue_n[speculative_write_pointer_q].wait_rvalid = 1'b0;
@@ -155,6 +158,7 @@ module store_buffer
   assign req_port_o.data_wuser = '0;
   assign req_port_o.data_be = commit_queue_q[commit_read_pointer_q].be;
   assign req_port_o.data_size = commit_queue_q[commit_read_pointer_q].data_size;
+  assign req_port_o.dcs_data      = commit_queue_q[commit_read_pointer_q].dcs_data;
 
   assign rvfi_mem_paddr_o = speculative_queue_q[speculative_read_pointer_q].address;
 

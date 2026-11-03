@@ -233,6 +233,7 @@ module issue_read_operands
   logic [OPERANDS_PER_INSTR-1:0] rs_valid;
   logic [OPERANDS_PER_INSTR-1:0][CVA6Cfg.XLEN-1:0] rs;
 
+
   cvxif_issue_register_commit_if_driver #(
       .CVA6Cfg       (CVA6Cfg),
       .x_issue_req_t (x_issue_req_t),
@@ -286,7 +287,9 @@ module issue_read_operands
   end
 
   assign alu_bypass_o = alu_bypass_q;
-  assign fu_data_o = fu_data_q;
+  always_comb begin
+    fu_data_o = fu_data_q;
+  end
   assign alu_valid_o = alu_valid_q;
   assign aes_valid_o = aes_valid_q;
   assign branch_valid_o = branch_valid_q;
@@ -697,6 +700,9 @@ module issue_read_operands
       fu_data_n[i].trans_id  = issue_instr_i[i].trans_id;
       fu_data_n[i].fu        = issue_instr_i[i].fu;
       fu_data_n[i].operation = issue_instr_i[i].op;
+      fu_data_n[i].use_dcs   = issue_instr_i[i].use_dcs;
+      fu_data_n[i].aq        = issue_instr_i[i].aq;
+      fu_data_n[i].rl        = issue_instr_i[i].rl;
       if (CVA6Cfg.RVH) begin
         tinst_n[i] = issue_instr_i[i].ex.tinst;
       end

@@ -53,10 +53,24 @@ module wt_dcache
     input  dcache_rtrn_t mem_rtrn_i,
     output logic         mem_data_req_o,
     input  logic         mem_data_ack_i,
-    output dcache_req_t  mem_data_o
+    output dcache_req_t  mem_data_o,
+
+    // Invalidation request from AXI-ACE
+    input  logic                           mem_inv_req_i,
+    input  logic [CVA6Cfg.PLEN-1:0]        mem_inv_addr_i,
+    output logic                           mem_inv_ack_o
 );
 
   localparam DCACHE_CL_IDX_WIDTH = $clog2(CVA6Cfg.DCACHE_NUM_WORDS);
+  localparam int unsigned MemPorts = NumPorts + 1;
+
+  // Cache invalidation type
+  localparam type dcache_inval_t = struct packed {
+    logic                                      vld;  // invalidate only affected way
+    logic                                      all;  // invalidate all ways
+    logic [CVA6Cfg.DCACHE_INDEX_WIDTH-1:0]     idx;  // physical address to invalidate
+    logic [CVA6Cfg.DCACHE_SET_ASSOC_WIDTH-1:0] way;  // way to invalidate
+  };
 
   localparam type wbuffer_t = struct packed {
     logic [CVA6Cfg.DCACHE_TAG_WIDTH+(CVA6Cfg.DCACHE_INDEX_WIDTH-CVA6Cfg.XLEN_ALIGN_BYTES)-1:0] wtag;
@@ -67,6 +81,7 @@ module wt_dcache
     logic [(CVA6Cfg.XLEN/8)-1:0] txblock;  // byte is part of transaction in-flight
     logic checked;  // if cache state of this word has been checked
     logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] hit_oh;  // valid way in the cache
+    ariane_pkg::dcs_data_t dcs_data;
   };
 
   // miss unit <-> read controllers
@@ -101,18 +116,19 @@ module wt_dcache
   logic     [                      NumPorts-1:0][               CVA6Cfg.PLEN-1:0] miss_paddr;
   logic     [                      NumPorts-1:0][                            2:0] miss_size;
   logic     [                      NumPorts-1:0][      CVA6Cfg.MEM_TID_WIDTH-1:0] miss_id;
+  dcs_data_t [NumPorts-1:0]                                                        miss_dcs_data;
   logic     [                      NumPorts-1:0]                                  miss_replay;
   logic     [                      NumPorts-1:0]                                  miss_rtrn_vld;
   logic     [         CVA6Cfg.MEM_TID_WIDTH-1:0]                                  miss_rtrn_id;
 
   // memory <-> read controllers/miss unit
-  logic     [                      NumPorts-1:0]                                  rd_prio;
-  logic     [                      NumPorts-1:0]                                  rd_tag_only;
-  logic     [                      NumPorts-1:0]                                  rd_req;
-  logic     [                      NumPorts-1:0]                                  rd_ack;
-  logic     [                      NumPorts-1:0][   CVA6Cfg.DCACHE_TAG_WIDTH-1:0] rd_tag;
-  logic     [                      NumPorts-1:0][        DCACHE_CL_IDX_WIDTH-1:0] rd_idx;
-  logic     [                      NumPorts-1:0][CVA6Cfg.DCACHE_OFFSET_WIDTH-1:0] rd_off;
+  logic     [                      MemPorts-1:0]                                  rd_prio;
+  logic     [                      MemPorts-1:0]                                  rd_tag_only;
+  logic     [                      MemPorts-1:0]                                  rd_req;
+  logic     [                      MemPorts-1:0]                                  rd_ack;
+  logic     [                      MemPorts-1:0][   CVA6Cfg.DCACHE_TAG_WIDTH-1:0] rd_tag;
+  logic     [                      MemPorts-1:0][        DCACHE_CL_IDX_WIDTH-1:0] rd_idx;
+  logic     [                      MemPorts-1:0][CVA6Cfg.DCACHE_OFFSET_WIDTH-1:0] rd_off;
   logic     [                  CVA6Cfg.XLEN-1:0]                                  rd_data;
   logic     [     CVA6Cfg.DCACHE_USER_WIDTH-1:0]                                  rd_user;
   logic     [      CVA6Cfg.DCACHE_SET_ASSOC-1:0]                                  rd_vld_bits;
@@ -126,6 +142,11 @@ module wt_dcache
   wbuffer_t [     CVA6Cfg.WtDcacheWbufDepth-1:0]                                  wbuffer_data;
 
 
+  // inval <-> missunit
+  dcache_inval_t inv_req;
+  logic          inv_ack;
+
+
   ///////////////////////////////////////////////////////
   // miss handling unit
   ///////////////////////////////////////////////////////
@@ -135,6 +156,7 @@ module wt_dcache
       .DCACHE_CL_IDX_WIDTH(DCACHE_CL_IDX_WIDTH),
       .dcache_req_t(dcache_req_t),
       .dcache_rtrn_t(dcache_rtrn_t),
+      .dcache_inval_t(dcache_inval_t),
       .AmoTxId(RdAmoTxId),
       .NumPorts(NumPorts)
   ) i_wt_dcache_missunit (
@@ -161,9 +183,13 @@ module wt_dcache
       .miss_vld_bits_i(miss_vld_bits_o),
       .miss_size_i    (miss_size),
       .miss_id_i      (miss_id),
+      .miss_dcs_data_i(miss_dcs_data),
       .miss_replay_o  (miss_replay),
       .miss_rtrn_vld_o(miss_rtrn_vld),
       .miss_rtrn_id_o (miss_rtrn_id),
+      // invalidate
+      .inv_req_i      (inv_req),
+      .inv_ack_o      (inv_ack),
       // from writebuffer
       .tx_paddr_i     (tx_paddr),
       .tx_vld_i       (tx_vld),
@@ -219,6 +245,7 @@ module wt_dcache
           .miss_nc_o      (miss_nc[k]),
           .miss_size_o    (miss_size[k]),
           .miss_id_o      (miss_id[k]),
+          .miss_dcs_data_o(miss_dcs_data[k]),
           .miss_replay_i  (miss_replay[k]),
           .miss_rtrn_vld_i(miss_rtrn_vld[k]),
           // used to detect readout mux collisions
@@ -290,6 +317,7 @@ module wt_dcache
       .miss_nc_o      (miss_nc[NumPorts-1]),
       .miss_size_o    (miss_size[NumPorts-1]),
       .miss_id_o      (miss_id[NumPorts-1]),
+      .miss_dcs_data_o( miss_dcs_data[NumPorts-1] ),
       .miss_rtrn_vld_i(miss_rtrn_vld[NumPorts-1]),
       .miss_rtrn_id_i (miss_rtrn_id),
       // cache read interface
@@ -327,7 +355,7 @@ module wt_dcache
       .CVA6Cfg(CVA6Cfg),
       .DCACHE_CL_IDX_WIDTH(DCACHE_CL_IDX_WIDTH),
       .wbuffer_t(wbuffer_t),
-      .NumPorts(NumPorts)
+      .NumPorts(MemPorts)
   ) i_wt_dcache_mem (
       .clk_i          (clk_i),
       .rst_ni         (rst_ni),
@@ -365,6 +393,50 @@ module wt_dcache
       // write buffer forwarding
       .wbuffer_data_i (wbuffer_data)
   );
+
+`ifndef PITON_ARIANE
+  ///////////////////////////////////////////////////////
+  // invalidate unit for snooping on AXI
+  ///////////////////////////////////////////////////////
+
+  // set read port to high priority
+  assign rd_prio[MemPorts-1] = 1'b1;
+
+  wt_dcache_inval #(
+      .CVA6Cfg       (CVA6Cfg),
+      .dcache_inval_t(dcache_inval_t)
+  ) i_wt_dcache_inval (
+      .clk_i          (clk_i),
+      .rst_ni         (rst_ni),
+      // request port from bus
+      .mem_inv_req_i  (mem_inv_req_i),
+      .mem_inv_paddr_i(mem_inv_addr_i),
+      .mem_inv_ack_o  (mem_inv_ack_o),
+      // cache read interface
+      .rd_tag_o       (rd_tag      [MemPorts-1]),
+      .rd_idx_o       (rd_idx      [MemPorts-1]),
+      .rd_off_o       (rd_off      [MemPorts-1]),
+      .rd_req_o       (rd_req      [MemPorts-1]),
+      .rd_tag_only_o  (rd_tag_only [MemPorts-1]),
+      .rd_ack_i       (rd_ack      [MemPorts-1]),
+      .rd_data_i      (rd_data),
+      .rd_vld_bits_i  (rd_vld_bits),
+      .rd_hit_oh_i    (rd_hit_oh),
+      // to missunit
+      .inv_req_o      (inv_req),
+      .inv_ack_i      (inv_ack)
+  );
+
+`else
+  assign rd_prio[MemPorts-1]    = 1'b0;
+  assign rd_tag[MemPorts-1]     = '0;
+  assign rd_idx[MemPorts-1]     = '0;
+  assign rd_off[MemPorts-1]     = '0;
+  assign rd_req[MemPorts-1]     = 1'b0;
+  assign rd_tag_only[MemPorts-1]= 1'b0;
+  assign mem_inv_ack_o          = 1'b0;
+  assign inv_req                = '0;
+`endif
 
   ///////////////////////////////////////////////////////
   // assertions

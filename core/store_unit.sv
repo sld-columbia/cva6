@@ -137,6 +137,9 @@ module store_unit
   logic [CVA6Cfg.XLEN-1:0] st_data_n, st_data_q;
   logic [(CVA6Cfg.XLEN/8)-1:0] st_be_n, st_be_q;
   logic [1:0] st_data_size_n, st_data_size_q;
+  dcs_data_t    st_dcs_data_n,  st_dcs_data_q;
+  logic         st_aq_n,        st_aq_q;
+  logic         st_rl_n,        st_rl_q;
   amo_t amo_op_d, amo_op_q;
   cbo_t cbo_op_d, cbo_op_q;
 
@@ -278,6 +281,9 @@ module store_unit
     st_data_n = ((CVA6Cfg.RVA && instr_is_amo) ? endian_data[CVA6Cfg.XLEN-1:0] :
                  data_align(lsu_ctrl_i.vaddr[2:0], {{64 - CVA6Cfg.XLEN{1'b0}}, endian_data}));
     st_data_size_n = extract_transfer_size(lsu_ctrl_i.operation);
+    st_dcs_data_n = lsu_ctrl_i.dcs_data;
+    st_aq_n = lsu_ctrl_i.aq;
+    st_rl_n = lsu_ctrl_i.rl;
     // save AMO op for next cycle
     if (CVA6Cfg.RVA) begin
       case (lsu_ctrl_i.operation)
@@ -352,6 +358,7 @@ module store_unit
       .cbo_op_i             (cbo_op_q),
       .be_i                 (st_be_q),
       .data_size_i          (st_data_size_q),
+      .dcs_data_i           (st_dcs_data_q),
       .req_port_i           (req_port_i),
       .req_port_o           (req_port_o)
   );
@@ -369,6 +376,8 @@ module store_unit
         .amo_op_i          (amo_op_q),
         .data_i            (st_data_q),
         .data_size_i       (st_data_size_q),
+        .aq_i              (st_aq_q),
+        .rl_i              (st_rl_q),
         .amo_req_o         (amo_req_o),
         .amo_resp_i        (amo_resp_i),
         .amo_valid_commit_i(amo_valid_commit_i),
@@ -388,6 +397,9 @@ module store_unit
       st_be_q        <= '0;
       st_data_q      <= '0;
       st_data_size_q <= '0;
+      st_dcs_data_q  <= '0;
+      st_aq_q        <= '0;
+      st_rl_q        <= '0;
       trans_id_q     <= '0;
       amo_op_q       <= AMO_NONE;
       cbo_op_q       <= ariane_pkg::CBO_NONE;
@@ -399,6 +411,9 @@ module store_unit
       st_data_size_q <= st_data_size_n;
       amo_op_q       <= amo_op_d;
       cbo_op_q       <= cbo_op_d;
+      st_dcs_data_q  <= st_dcs_data_n;
+      st_aq_q        <= st_aq_n;
+      st_rl_q        <= st_rl_n;
     end
   end
 

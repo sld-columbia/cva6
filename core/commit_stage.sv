@@ -89,7 +89,9 @@ module commit_stage
     // TO_BE_COMPLETED - CONTROLLER
     output logic hfence_gvma_o,
     // Breakpoint exception from trigger module
-    input logic break_from_trigger_i
+    input logic break_from_trigger_i,
+    // fence indication to l2
+    output logic [1:0] fence_l2_o
 );
 
   // ila_0 i_ila_commit (
@@ -155,6 +157,7 @@ module commit_stage
     hfence_gvma_o = 1'b0;
     csr_write_fflags_o = 1'b0;
     flush_commit_o = 1'b0;
+    fence_l2_o         = 2'b0;
 
     // we do not commit the instruction yet if we requested a halt
     if (commit_instr_i[0].valid && !halt_i) begin
@@ -288,6 +291,11 @@ module commit_stage
             commit_ack_o[0] = no_st_pending_i;
             // tell the controller to flush the D$
             fence_o = no_st_pending_i;
+
+            // we also sample the values of SR (required for self-invalidation)
+            // and PW (required for WB flush)
+            fence_l2_o[0] = commit_instr_i[0].fence_op[0] & fence_o; // SR
+            fence_l2_o[1] = commit_instr_i[0].fence_op[1] & fence_o; // PW
           end
         end
         // ------------------

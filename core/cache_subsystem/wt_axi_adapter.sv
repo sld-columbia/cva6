@@ -58,7 +58,19 @@ module wt_axi_adapter
     // Invalidations
     input  logic [63:0] inval_addr_i,
     input  logic        inval_valid_i,
-    output logic        inval_ready_o
+    output logic        inval_ready_o,
+
+    // invalidate request from AXI
+    output logic                    icache_inv_req_o,
+    output logic [CVA6Cfg.PLEN-1:0] icache_inv_addr_o,
+    input  logic                    icache_inv_ack_i,
+    output logic                    dcache_inv_req_o,
+    output logic [CVA6Cfg.PLEN-1:0] dcache_inv_addr_o,
+    input  logic                    dcache_inv_ack_i,
+
+    // ACE port (only need AC channel for invalidate)
+    input  ariane_axi::snoop_req_t   ace_req_i,
+    output ariane_axi::snoop_resp_t  ace_resp_o
 );
 
   // support up to 512bit cache lines
@@ -84,7 +96,9 @@ module wt_axi_adapter
   logic axi_rd_req, axi_rd_gnt;
   logic axi_wr_req, axi_wr_gnt;
   logic axi_wr_valid, axi_rd_valid, axi_rd_rdy, axi_wr_rdy;
-  logic axi_rd_lock, axi_wr_lock, axi_rd_exokay, axi_wr_exokay, wr_exokay;
+  logic axi_wr_aq, axi_wr_rl;
+  dcs_data_t axi_rd_dcs_data, axi_wr_dcs_data;
+  logic axi_rd_lock, axi_wr_lock, axi_rd_exokay, axi_wr_exokay, wr_exokay, axi_rd_instr;
   logic [CVA6Cfg.AxiAddrWidth-1:0] axi_rd_addr, axi_wr_addr;
   logic [AxiBlenWidth-1:0] axi_rd_blen, axi_wr_blen;
   logic [2:0] axi_rd_size, axi_wr_size;
@@ -108,6 +122,15 @@ module wt_axi_adapter
   logic icache_rd_full, icache_rd_empty;
   logic dcache_rd_full, dcache_rd_empty;
   logic dcache_wr_full, dcache_wr_empty;
+  logic [CVA6Cfg.PLEN-1:0] dcache_rtrn_rd_addr;
+  logic dcache_rd_addr_empty;
+
+  // snooping on ACE
+  logic                 axi_ac_valid;
+  logic                 axi_ac_ready;
+  logic [63:0]          axi_ac_addr;
+  axi_pkg::prot_t       axi_ac_prot;
+  logic                 inval_gnt;
 
   assign icache_data_ack_o = icache_data_req_i & ~icache_data_full;
   assign dcache_data_ack_o = dcache_data_req_i & ~dcache_data_full;
@@ -147,6 +170,7 @@ module wt_axi_adapter
     // Cast to AXI address width
     axi_wr_addr  = CVA6Cfg.AxiAddrWidth'(dcache_data.paddr);
     axi_wr_size  = dcache_data.size;
+    axi_wr_dcs_data = dcache_data.dcs_data;
     axi_wr_req   = 1'b0;
     axi_wr_blen  = '0;// single word writes
     axi_wr_be    = '0;
@@ -154,12 +178,15 @@ module wt_axi_adapter
     axi_wr_atop  = '0;
     amo_off_d    = amo_off_q;
     amo_gen_r_d  = amo_gen_r_q;
+    axi_wr_aq    = dcache_data.aq;
+    axi_wr_rl    = dcache_data.rl;
 
     // read channel
     axi_rd_id_in = {{CVA6Cfg.AxiIdWidth-1{1'b0}}, arb_idx};
     axi_rd_req   = 1'b0;
     axi_rd_lock  = '0;
     axi_rd_blen  = '0;
+    axi_rd_instr = 1'b0;
 
     if (dcache_data.paddr[2] == 1'b0) begin
       axi_wr_user = {{64 - CVA6Cfg.AxiUserWidth{1'b0}}, dcache_data.user};
@@ -173,6 +200,7 @@ module wt_axi_adapter
       axi_rd_addr = CVA6Cfg.AxiAddrWidth'(dcache_data.paddr);
       // If dcache_data.size MSB is set, we want to read as much as possible
       axi_rd_size = dcache_data.size[2] ? MaxNumWords[2:0] : dcache_data.size;
+      axi_rd_dcs_data = dcache_data.dcs_data;
       if (dcache_data.size[2]) begin
         axi_rd_blen = AxiRdBlenDcache[AxiBlenWidth-1:0];
       end
@@ -180,9 +208,11 @@ module wt_axi_adapter
       // Cast to AXI address width
       axi_rd_addr = CVA6Cfg.AxiAddrWidth'(icache_data.paddr);
       axi_rd_size = MaxNumWords[2:0];  // always request max number of words in case of ifill
+      axi_rd_dcs_data   = '0;
       if (!icache_data.nc) begin
         axi_rd_blen = AxiRdBlenIcache[AxiBlenWidth-1:0];
       end
+      axi_rd_instr = 1'b1;
     end
 
     // signal that an invalidation message
@@ -450,6 +480,25 @@ module wt_axi_adapter
       .pop_i     (dcache_rd_pop)
   );
 
+  // keep track of read address to check incoming invalidations for conflict
+  cva6_fifo_v3 #(
+    .DATA_WIDTH(CVA6Cfg.PLEN),
+    .DEPTH     (MetaFifoDepth),
+    .FPGA_EN   (CVA6Cfg.FpgaEn)
+  ) i_rd_dcache_addr (
+    .clk_i     (clk_i),
+    .rst_ni    (rst_ni),
+    .flush_i   (1'b0),
+    .testmode_i(1'b0),
+    .full_o    (),
+    .empty_o   (dcache_rd_addr_empty),
+    .usage_o   (),
+    .data_i    (dcache_data.paddr),
+    .push_i    (arb_ack[1] & axi_rd_gnt),
+    .data_o    (dcache_rtrn_rd_addr),
+    .pop_i     (dcache_rd_pop)
+  );
+
   cva6_fifo_v3 #(
       .DATA_WIDTH(CVA6Cfg.MEM_TID_WIDTH),
       .DEPTH     (MetaFifoDepth),
@@ -470,6 +519,23 @@ module wt_axi_adapter
 
   // select correct tid to return
   assign dcache_rtrn_tid_d = (dcache_wr_pop) ? dcache_rtrn_wr_tid : dcache_rtrn_rd_tid;
+
+  ///////////////////////////////////////////////////////
+  // Snoop channel request-response
+  ///////////////////////////////////////////////////////
+  assign icache_inv_addr_o = axi_ac_addr[CVA6Cfg.PLEN-1:0];
+  assign dcache_inv_addr_o = axi_ac_addr[CVA6Cfg.PLEN-1:0];
+  assign axi_ac_ready      = (icache_inv_ack_i & icache_inv_req_o) | (dcache_inv_ack_i & dcache_inv_req_o);
+  assign inval_gnt         = (axi_ac_addr[CVA6Cfg.PLEN-1:0] != dcache_rtrn_rd_addr) | dcache_rd_addr_empty;
+
+  always_comb begin : p_axi_snoop
+    icache_inv_req_o = 1'b0;
+    dcache_inv_req_o = 1'b0;
+    if (axi_ac_prot[2])
+      icache_inv_req_o = axi_ac_valid & inval_gnt;
+    else
+      dcache_inv_req_o = axi_ac_valid & inval_gnt;
+  end
 
   ///////////////////////////////////////////////////////
   // return path
@@ -743,7 +809,9 @@ module wt_axi_adapter
       .rd_addr_i  (axi_rd_addr),
       .rd_blen_i  (axi_rd_blen),
       .rd_size_i  (axi_rd_size),
+      .rd_dcs_data_i (axi_rd_dcs_data),
       .rd_id_i    (axi_rd_id_in),
+      .rd_instr_i (axi_rd_instr),
       .rd_rdy_i   (axi_rd_rdy),
       .rd_lock_i  (axi_rd_lock),
       .rd_last_o  (axi_rd_last),
@@ -760,15 +828,24 @@ module wt_axi_adapter
       .wr_be_i    (axi_wr_be),
       .wr_blen_i  (axi_wr_blen),
       .wr_size_i  (axi_wr_size),
+      .wr_dcs_data_i (axi_wr_dcs_data),
       .wr_id_i    (axi_wr_id_in),
       .wr_lock_i  (axi_wr_lock),
       .wr_atop_i  (axi_wr_atop),
+      .wr_aq_i    (axi_wr_aq),
+      .wr_rl_i    (axi_wr_rl),
       .wr_rdy_i   (axi_wr_rdy),
       .wr_valid_o (axi_wr_valid),
       .wr_id_o    (axi_wr_id_out),
       .wr_exokay_o(axi_wr_exokay),
-      .axi_req_o  (axi_req_o),
-      .axi_resp_i (axi_resp_i)
+    .axi_ac_valid_o(axi_ac_valid),
+    .axi_ac_addr_o (axi_ac_addr),
+    .axi_ac_prot_o (axi_ac_prot),
+    .axi_ac_ready_i(axi_ac_ready),
+    .axi_req_o  (axi_req_o),
+    .axi_resp_i (axi_resp_i),
+    .ace_req_i  (ace_req_i),
+    .ace_resp_o (ace_resp_o)
   );
 
   ///////////////////////////////////////////////////////

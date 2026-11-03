@@ -65,7 +65,14 @@ module ariane import ariane_pkg::*; #(
   output rvfi_probes_t rvfi_probes_o,
   // memory side
   output noc_req_t                     noc_req_o,
-  input  noc_resp_t                    noc_resp_i
+  input  noc_resp_t                    noc_resp_i,
+  input  ariane_axi::snoop_req_t       ace_req_i,
+  output ariane_axi::snoop_resp_t      ace_resp_o,
+  // fence indication to l2
+  output logic [1:0]                   fence_l2_o,
+  //flush L1 from L2
+  input logic                          flush_l1_i,
+  output logic                         flush_done_o
 );
 
   cvxif_req_t  cvxif_req;
@@ -107,7 +114,12 @@ module ariane import ariane_pkg::*; #(
     .cvxif_req_o          ( cvxif_req                 ),
     .cvxif_resp_i         ( cvxif_resp                ),
     .noc_req_o            ( noc_req_o                 ),
-    .noc_resp_i           ( noc_resp_i                )
+    .noc_resp_i           ( noc_resp_i                ),
+    .ace_req_i            ( ace_req_i                 ),
+    .ace_resp_o           ( ace_resp_o                ),
+    .fence_l2_o           (fence_l2_o                 ),
+    .flush_l1_i           (flush_l1_i                 ),
+    .flush_done_o         (flush_done_o               )
   );
 
   if (CVA6Cfg.CvxifEn) begin: gen_cvxif

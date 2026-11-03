@@ -301,6 +301,8 @@ module instr_tracer #(
 
   initial begin
     #15ns;
+    @(posedge rstn)
+    #15ns;
     create_file(hart_id_i);
     trace();
   end

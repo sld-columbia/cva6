@@ -22,6 +22,7 @@ module wt_dcache_missunit
     parameter DCACHE_CL_IDX_WIDTH = 0,
     parameter type dcache_req_t = logic,
     parameter type dcache_rtrn_t = logic,
+    parameter type dcache_inval_t = logic,
     parameter logic [CVA6Cfg.MEM_TID_WIDTH-1:0] AmoTxId = 1,  // TX id to be used for AMOs
     parameter int unsigned NumPorts = 4  // number of miss ports
 ) (
@@ -50,11 +51,15 @@ module wt_dcache_missunit
     input logic [NumPorts-1:0][CVA6Cfg.DCACHE_SET_ASSOC-1:0] miss_vld_bits_i,
     input logic [NumPorts-1:0][2:0] miss_size_i,
     input logic [NumPorts-1:0][CVA6Cfg.MEM_TID_WIDTH-1:0] miss_id_i,  // used as transaction ID
+    input  dcs_data_t [NumPorts-1:0]                   miss_dcs_data_i,
     // signals that the request collided with a pending read
     output logic [NumPorts-1:0] miss_replay_o,
     // signals response from memory
     output logic [NumPorts-1:0] miss_rtrn_vld_o,
     output logic [CVA6Cfg.MEM_TID_WIDTH-1:0]                  miss_rtrn_id_o,     // only used for writes, set to zero for reads
+    // from invalidate unit
+    input  dcache_inval_t                                     inv_req_i,
+    output logic                                              inv_ack_o,
     // from writebuffer
     input  logic [CVA6Cfg.DCACHE_MAX_TX-1:0][CVA6Cfg.PLEN-1:0]  tx_paddr_i,         // used to check for address collisions with read operations
     input  logic [CVA6Cfg.DCACHE_MAX_TX-1:0]                   tx_vld_i,           // used to check for address collisions with read operations
@@ -131,6 +136,8 @@ module wt_dcache_missunit
 
   mshr_t mshr_d, mshr_q;
   logic [$clog2(CVA6Cfg.DCACHE_SET_ASSOC)-1:0] repl_way, inv_way, rnd_way;
+  logic [CVA6Cfg.DCACHE_SET_ASSOC-1:0] inv_req_way_oh;
+  logic [DCACHE_CL_IDX_WIDTH-1:0] inv_req_idx;
   logic mshr_vld_d, mshr_vld_q, mshr_vld_q1;
   logic mshr_allocate;
   logic update_lfsr, all_ways_valid;
@@ -149,7 +156,7 @@ module wt_dcache_missunit
   logic [DCACHE_CL_IDX_WIDTH-1:0] cnt_d, cnt_q;
   logic [NumPorts-1:0] miss_req_masked_d, miss_req_masked_q;
 
-  logic inv_vld, inv_vld_all, cl_write_en;
+  logic inv_vld, inv_vld_all, inv_ack, cl_write_en;
   logic load_ack, store_ack, amo_ack;
 
   logic [NumPorts-1:0] mshr_rdrd_collision_d, mshr_rdrd_collision_q;
@@ -326,6 +333,9 @@ module wt_dcache_missunit
   assign mem_data_o.user = (CVA6Cfg.RVA && amo_sel) ? amo_user : miss_wuser_i[miss_port_idx];
   assign mem_data_o.size   = (CVA6Cfg.RVA && amo_sel) ? {1'b0, amo_req_i.size} : miss_size_i [miss_port_idx];
   assign mem_data_o.amo_op = (CVA6Cfg.RVA && amo_sel) ? amo_req_i.amo_op : AMO_NONE;
+  assign mem_data_o.dcs_data = (amo_sel) ? '0                : miss_dcs_data_i[miss_port_idx];
+  assign mem_data_o.aq     = (amo_sel) ? amo_req_i.aq        : '0;
+  assign mem_data_o.rl     = (amo_sel) ? amo_req_i.rl        : '0;
 
   assign tmp_paddr         = (CVA6Cfg.RVA && amo_sel) ? amo_req_i.operand_a[CVA6Cfg.PLEN-1:0] : miss_paddr_i[miss_port_idx];
   assign mem_data_o.paddr = paddrSizeAlign(tmp_paddr, mem_data_o.size);
@@ -367,6 +377,7 @@ module wt_dcache_missunit
     amo_ack         = 1'b0;
     inv_vld         = 1'b0;
     inv_vld_all     = 1'b0;
+    inv_ack         = 1'b0;
     sc_fail         = 1'b0;
     sc_pass         = 1'b0;
     miss_rtrn_vld_o = '0;
@@ -410,11 +421,18 @@ module wt_dcache_missunit
         default: begin
         end
       endcase
+    end else if (inv_req_i.vld) begin // if (mem_rtrn_vld_i)
+       // Give priority to memory responses over invalidate requests from AXI
+       inv_vld = 1'b1;
+       inv_ack = 1'b1;
     end
   end
 
   // to write buffer
   assign miss_rtrn_id_o = mem_rtrn_i.tid;
+
+  // to invalidate unit
+  assign inv_ack_o                = inv_ack;
 
   ///////////////////////////////////////////////////////
   // writes to cache memory
@@ -424,19 +442,28 @@ module wt_dcache_missunit
   assign wr_cl_nc_o = mshr_q.nc;
   assign wr_cl_vld_o = load_ack | (|wr_cl_we_o);
 
-  assign wr_cl_we_o = (flush_en) ? '1 : (inv_vld_all) ? '1 : (inv_vld) ? dcache_way_bin2oh(
-      mem_rtrn_i.inv.way
-  ) : (cl_write_en) ? dcache_way_bin2oh(
-      mshr_q.repl_way
-  ) : '0;
+  assign inv_req_way_oh  = (CVA6Cfg.NOCType == config_pkg::NOC_TYPE_AXI4_ATOP) ?
+                                dcache_way_bin2oh(inv_req_i.way)   :
+			                          dcache_way_bin2oh(mem_rtrn_i.inv.way);
+
+  assign wr_cl_we_o      = (flush_en   )  ? '1                                     :
+                           (inv_vld_all)   ? '1                                    :
+                           (inv_vld    )   ? inv_req_way_oh                        :
+                           (cl_write_en)   ? dcache_way_bin2oh(mshr_q.repl_way)    :
+                                             '0;
 
   assign wr_vld_bits_o = (flush_en) ? '0 : (inv_vld) ? '0 : (cl_write_en) ? dcache_way_bin2oh(
       mshr_q.repl_way
   ) : '0;
 
-  assign wr_cl_idx_o     = (flush_en) ? cnt_q                                                        :
-                           (inv_vld)  ? mem_rtrn_i.inv.idx[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] :
-                                        mshr_q.paddr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH];
+  assign inv_req_idx     = (CVA6Cfg.NOCType == config_pkg::NOC_TYPE_AXI4_ATOP) ?
+                                inv_req_i.idx[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH]      :
+			                          mem_rtrn_i.inv.idx[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH];
+
+  assign wr_cl_idx_o     = (flush_en)    ? cnt_q                                                        :
+                           (inv_vld_all) ? mem_rtrn_i.inv.idx[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH] :
+                           (inv_vld)     ? inv_req_idx                                                  :
+                                           mshr_q.paddr[CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_OFFSET_WIDTH];
 
   assign wr_cl_tag_o = mshr_q.paddr[CVA6Cfg.DCACHE_TAG_WIDTH+CVA6Cfg.DCACHE_INDEX_WIDTH-1:CVA6Cfg.DCACHE_INDEX_WIDTH];
   assign wr_cl_off_o = mshr_q.paddr[CVA6Cfg.DCACHE_OFFSET_WIDTH-1:0];

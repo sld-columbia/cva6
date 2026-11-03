@@ -102,6 +102,7 @@ module cva6
       logic [REG_ADDR_SIZE-1:0] rs1;  // register source address 1
       logic [REG_ADDR_SIZE-1:0] rs2;  // register source address 2
       logic [REG_ADDR_SIZE-1:0] rd;  // register destination address
+      logic                     sync;
       logic [CVA6Cfg.XLEN-1:0] result;  // for unfinished instructions this field also holds the immediate,
       // for unfinished floating-point that are partly encoded in rs2, this field also holds rs2
       // for unfinished floating-point fused operations (FMADD, FMSUB, FNMADD, FNMSUB)
@@ -119,6 +120,10 @@ module cva6
       logic is_double_rd_macro_instr;  // is double move decoded 32bit instruction of macro definition
       logic vfp;  // is this a vector floating-point instruction?
       logic is_zcmt;  //is a zcmt instruction
+      logic [1:0] fence_op;  // SR/PW bits sampled from a FENCE instruction
+      logic                     use_dcs;       // 1 for load/store using dcs
+      logic                     aq;
+      logic                     rl;
     },
     localparam type writeback_t = struct packed {
       logic valid;  // wb data is valid
@@ -164,6 +169,9 @@ module cva6
       fu_t                              fu;
       fu_op                             operation;
       logic [CVA6Cfg.TRANS_ID_BITS-1:0] trans_id;
+      dcs_data_t                        dcs_data;
+      logic                             aq;
+      logic                             rl;
       logic                             is_speculative_load;
       logic                             is_speculative_load_miss;
     },
@@ -178,6 +186,9 @@ module cva6
       logic [CVA6Cfg.XLEN-1:0]          operand_b;
       logic [CVA6Cfg.XLEN-1:0]          imm;
       logic [CVA6Cfg.TRANS_ID_BITS-1:0] trans_id;
+      logic                             use_dcs;
+      logic                             aq;
+      logic                             rl;
     },
 
     localparam type icache_req_t = struct packed {
@@ -213,6 +224,7 @@ module cva6
       logic                                  kill_req;
       logic                                  tag_valid;
       cbo_t                                  cbo_op;
+      dcs_data_t                             dcs_data;
     },
 
     localparam type dcache_req_o_t = struct packed {
@@ -341,7 +353,14 @@ module cva6
     // noc request, can be AXI or OpenPiton - SUBSYSTEM
     output noc_req_t noc_req_o,
     // noc response, can be AXI or OpenPiton - SUBSYSTEM
-    input noc_resp_t noc_resp_i
+    input noc_resp_t noc_resp_i,
+    input  ariane_axi::snoop_req_t ace_req_i,
+    output ariane_axi::snoop_resp_t ace_resp_o,
+    // fence indication to l2
+    output logic [1:0] fence_l2_o,
+    //flush L1 from L2
+    input logic flush_l1_i,
+    output logic flush_done_o
 );
 
   localparam type interrupts_t = struct packed {
@@ -664,6 +683,7 @@ module cva6
   dcache_req_o_t [1:0] dcache_req_ports_cache_acc;
   logic dcache_commit_wbuffer_empty;
   logic dcache_commit_wbuffer_not_ni;
+  logic dcache_flush;
 
   //RVFI
   lsu_ctrl_t rvfi_lsu_ctrl;
@@ -1153,7 +1173,8 @@ module cva6
       .sfence_vma_o        (sfence_vma_commit_controller),
       .hfence_vvma_o       (hfence_vvma_commit_controller),
       .hfence_gvma_o       (hfence_gvma_commit_controller),
-      .break_from_trigger_i(break_from_trigger)
+      .break_from_trigger_i(break_from_trigger),
+      .fence_l2_o          (fence_l2_o)
   );
 
   assign commit_ack = commit_macro_ack & ~commit_drop_id_commit;
@@ -1353,7 +1374,8 @@ module cva6
   // -------------------
   // Cache Subsystem
   // -------------------
-
+  assign dcache_flush = dcache_flush_ctrl_cache | flush_l1_i;
+  assign flush_done_o = dcache_flush_ack_cache_ctrl;
   // Acc dispatcher and store buffer share a dcache request port.
   // Store buffer always has priority access over acc dispatcher.
   dcache_req_i_t [NumPorts-1:0] dcache_req_to_cache;
@@ -1422,7 +1444,7 @@ module cva6
         .icache_dreq_o     (icache_dreq_cache_if),
         // D$
         .dcache_enable_i   (dcache_en_csr_nbdcache),
-        .dcache_flush_i    (dcache_flush_ctrl_cache),
+        .dcache_flush_i    (dcache_flush),
         .dcache_flush_ack_o(dcache_flush_ack_cache_ctrl),
         // to commit stage
         .dcache_amo_req_i  (amo_req),
@@ -1441,7 +1463,9 @@ module cva6
         .noc_resp_i        (noc_resp_i),
         .inval_addr_i      (inval_addr),
         .inval_valid_i     (inval_valid),
-        .inval_ready_o     (inval_ready)
+        .inval_ready_o     (inval_ready),
+        .ace_req_i         (ace_req_i),
+        .ace_resp_o        (ace_resp_o)
     );
   end else if (
         CVA6Cfg.DCacheType == config_pkg::HPDCACHE_WT ||
@@ -1480,7 +1504,7 @@ module cva6
         .icache_dreq_o (icache_dreq_cache_if),
 
         .dcache_enable_i   (dcache_en_csr_nbdcache),
-        .dcache_flush_i    (dcache_flush_ctrl_cache),
+        .dcache_flush_i    (dcache_flush),
         .dcache_flush_ack_o(dcache_flush_ack_cache_ctrl),
         .dcache_miss_o     (dcache_miss_cache_perf),
 
@@ -1544,7 +1568,7 @@ module cva6
         .icache_dreq_o     (icache_dreq_cache_if),
         // D$
         .dcache_enable_i   (dcache_en_csr_nbdcache),
-        .dcache_flush_i    (dcache_flush_ctrl_cache),
+        .dcache_flush_i    (dcache_flush),
         .dcache_flush_ack_o(dcache_flush_ack_cache_ctrl),
         // to commit stage
         .amo_req_i         (amo_req),

@@ -54,6 +54,9 @@ module cva6_icache
     // data requests
     input  icache_dreq_t dreq_i,
     output icache_drsp_t dreq_o,
+    input  logic                      mem_inv_req_i,        // invalidate request
+    input  logic [CVA6Cfg.PLEN-1:0]   mem_inv_addr_i,       // physical address to invalidate
+    output logic                      mem_inv_ack_o,        // invalidate request ack
     // refill port
     input  logic         mem_rtrn_vld_i,
     input  icache_rtrn_t mem_rtrn_i,
@@ -178,6 +181,8 @@ module cva6_icache
   // way that is being replaced
   assign mem_data_o.way = repl_way;
   assign dreq_o.vaddr   = vaddr_q;
+
+  assign mem_inv_ack_o = 1'b1;
 
   // invalidations take two cycles
   assign inv_d          = inv_en;

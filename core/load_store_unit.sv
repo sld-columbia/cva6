@@ -183,6 +183,9 @@ module load_store_unit
   logic                        pop_st;
   logic                        pop_ld;
 
+  // dynamic coherence specialization data
+  dcs_data_t                dcs_data;
+
   // ------------------------------
   // Address Generation Unit (AGU)
   // ------------------------------
@@ -193,7 +196,33 @@ module load_store_unit
   logic                        g_overflow;
   logic [(CVA6Cfg.XLEN/8)-1:0] be_i;
 
-  assign vaddr_xlen = $unsigned($signed(fu_data_i.imm) + $signed(fu_data_i.operand_a));
+  always_comb begin
+    if (fu_data_i.use_dcs == 1'b1) begin
+      dcs_data.dcs_en = 1'b1;
+      dcs_data.dcs    = fu_data_i.imm[10:9];
+      dcs_data.cid    = fu_data_i.imm[8:5];
+      if (fu_data_i.imm[4] == 1'b1) begin
+        // use owner prediction
+        dcs_data.use_owner_pred = 1'b1;
+        vaddr_xlen = $unsigned(
+            $signed({{CVA6Cfg.XLEN - 4{fu_data_i.imm[3]}}, fu_data_i.imm[3:0]}) +
+            $signed(fu_data_i.operand_a)
+        );
+      end else begin
+        // no owner prediction
+        dcs_data.use_owner_pred = 1'b0;
+        vaddr_xlen = $unsigned(
+            $signed(
+                {{CVA6Cfg.XLEN - 8{fu_data_i.imm[7]}}, fu_data_i.imm[8:5], fu_data_i.imm[3:0]}
+            ) + $signed(fu_data_i.operand_a)
+        );
+      end
+    end else begin
+      dcs_data = '0;
+      vaddr_xlen = $unsigned($signed(fu_data_i.imm) + $signed(fu_data_i.operand_a));
+    end
+  end
+
   assign vaddr_i = vaddr_xlen[CVA6Cfg.VLEN-1:0];
   // we work with SV39 or SV32, so if VM is enabled, check that all bits [XLEN-1:38] or [XLEN-1:31] are equal
   assign overflow = (CVA6Cfg.IS_XLEN64 && (!((&vaddr_xlen[CVA6Cfg.XLEN-1:CVA6Cfg.SV-1]) == 1'b1 || (|vaddr_xlen[CVA6Cfg.XLEN-1:CVA6Cfg.SV-1]) == 1'b0)));
@@ -865,6 +894,9 @@ module load_store_unit
     fu_data_i.fu,
     fu_data_i.operation,
     fu_data_i.trans_id,
+    dcs_data,
+    fu_data_i.aq,
+    fu_data_i.rl,
     speculative_load_i,
     1'b0
   };

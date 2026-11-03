@@ -38,6 +38,7 @@ module axi_riscv_lrsc #(
     parameter int unsigned AXI_DATA_WIDTH = 0,
     parameter int unsigned AXI_ID_WIDTH = 0,
     parameter int unsigned AXI_USER_WIDTH = 0,
+    parameter logic AXI_RISCV_AMOS_PRESENT = 1'b1,
     /// Derived Parameters (do NOT change manually!)
     localparam int unsigned AXI_STRB_WIDTH = AXI_DATA_WIDTH / 8
 ) (
@@ -63,6 +64,7 @@ module axi_riscv_lrsc #(
     input  logic [AXI_ADDR_WIDTH-1:0]   slv_ar_addr_i,
     input  logic [2:0]                  slv_ar_prot_i,
     input  logic [3:0]                  slv_ar_region_i,
+    input  logic [5:0]                  slv_ar_atop_i,
     input  logic [7:0]                  slv_ar_len_i,
     input  logic [2:0]                  slv_ar_size_i,
     input  logic [1:0]                  slv_ar_burst_i,
@@ -178,6 +180,8 @@ module axi_riscv_lrsc #(
                                 B_INJECT} w_state_t;
     w_state_t                       w_state_d,                  w_state_q;
 
+    logic on_going_amo_d, on_going_amo_q;
+
     // AR and R Channel
 
     // Time-Invariant Signal Assignments
@@ -187,7 +191,7 @@ module axi_riscv_lrsc #(
     assign mst_ar_len_o       = slv_ar_len_i;
     assign mst_ar_size_o      = slv_ar_size_i;
     assign mst_ar_burst_o     = slv_ar_burst_i;
-    assign mst_ar_lock_o      = 1'b0;
+    assign mst_ar_lock_o      = AXI_RISCV_AMOS_PRESENT ? slv_ar_lock_i | (|slv_ar_atop_i) : slv_ar_lock_i;
     assign mst_ar_cache_o     = slv_ar_cache_i;
     assign mst_ar_qos_o       = slv_ar_qos_i;
     assign mst_ar_id_o        = slv_ar_id_i;
@@ -201,7 +205,7 @@ module axi_riscv_lrsc #(
     always_comb begin
         mst_ar_valid_o  = 1'b0;
         slv_ar_ready_o  = 1'b0;
-        mst_r_ready_o   = 1'b0;
+        mst_r_ready_o   = AXI_RISCV_AMOS_PRESENT ? 1'b0 : slv_r_ready_i;
         slv_r_valid_o   = 1'b0;
         slv_r_resp_o    = '0;
         art_set_addr    = '0;
@@ -211,11 +215,15 @@ module axi_riscv_lrsc #(
         rd_clr_req      = 1'b0;
         r_excl_d        = r_excl_q;
         r_state_d       = r_state_q;
+        on_going_amo_d  = AXI_RISCV_AMOS_PRESENT ? 1'b0 : on_going_amo_q || (slv_aw_valid_i && slv_aw_atop_i);
 
         case (r_state_q)
 
             R_IDLE: begin
-                if (slv_ar_valid_i) begin
+                 if (on_going_amo_q) begin
+                     r_state_d = R_WAIT_R;
+                     on_going_amo_d = 1'b0;
+                 end else if (slv_ar_valid_i) begin
                     if (slv_ar_addr_i >= ADDR_BEGIN && slv_ar_addr_i <= ADDR_END && slv_ar_lock_i &&
                             slv_ar_len_i == 8'h00) begin
                         // Inside exclusively-accessible address range and exclusive access and no
@@ -285,7 +293,7 @@ module axi_riscv_lrsc #(
     assign mst_aw_len_o     = slv_aw_len_i;
     assign mst_aw_size_o    = slv_aw_size_i;
     assign mst_aw_burst_o   = slv_aw_burst_i;
-    assign mst_aw_lock_o    = 1'b0;
+    assign mst_aw_lock_o    = AXI_RISCV_AMOS_PRESENT ? slv_aw_lock_i | (|slv_aw_atop_i) : slv_aw_lock_i;
     assign mst_aw_cache_o   = slv_aw_cache_i;
     assign mst_aw_qos_o     = slv_aw_qos_i;
     assign mst_aw_id_o      = slv_aw_id_i;
@@ -410,8 +418,7 @@ module axi_riscv_lrsc #(
             B_FORWARD: begin
                 mst_b_ready_o   = slv_b_ready_i;
                 slv_b_valid_o   = mst_b_valid_i;
-                slv_b_resp_o[1] = mst_b_resp_i[1];
-                slv_b_resp_o[0] = (mst_b_resp_i[1] == 1'b0) ? b_excl_q : mst_b_resp_i[0];
+                slv_b_resp_o    = mst_b_resp_i;
                 slv_b_user_o    = mst_b_user_i;
                 slv_b_id_o      = mst_b_id_i;
                 if (slv_b_valid_o && slv_b_ready_i) begin
@@ -480,6 +487,7 @@ module axi_riscv_lrsc #(
             w_addr_q    <= '0;
             w_id_q      <= '0;
             w_state_q   <= AW_IDLE;
+            on_going_amo_q <= 1'b0;
         end else begin
             b_excl_q    <= b_excl_d;
             r_excl_q    <= r_excl_d;
@@ -487,6 +495,7 @@ module axi_riscv_lrsc #(
             w_addr_q    <= w_addr_d;
             w_id_q      <= w_id_d;
             w_state_q   <= w_state_d;
+            on_going_amo_q <= on_going_amo_d;
         end
     end
 
@@ -494,7 +503,7 @@ module axi_riscv_lrsc #(
 // pragma translate_off
 `ifndef VERILATOR
     initial begin: validate_params
-        assert (ADDR_END > ADDR_BEGIN)
+        assert (ADDR_END >= ADDR_BEGIN)
             else $fatal(1, "ADDR_END must be greater than ADDR_BEGIN!");
         assert (AXI_ADDR_WIDTH > 0)
             else $fatal(1, "AXI_ADDR_WIDTH must be greater than 0!");

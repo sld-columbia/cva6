@@ -72,7 +72,10 @@ module wt_cache_subsystem
     // Invalidations
     input logic [63:0] inval_addr_i,
     input logic inval_valid_i,
-    output logic inval_ready_o
+    output logic inval_ready_o,
+    // ACE snoop invalidate channel
+    input  ariane_axi::snoop_req_t  ace_req_i,
+    output ariane_axi::snoop_resp_t ace_resp_o
     // TODO: interrupt interface
 );
 
@@ -94,6 +97,9 @@ module wt_cache_subsystem
     logic nc;  // noncacheable
     logic [CVA6Cfg.MEM_TID_WIDTH-1:0] tid;  // thread id (used as transaction id in Ariane)
     ariane_pkg::amo_t amo_op;  // amo opcode
+    ariane_pkg::dcs_data_t dcs_data;
+    logic aq;
+    logic rl;
   };
 
   localparam type dcache_rtrn_t = struct packed {
@@ -112,6 +118,14 @@ module wt_cache_subsystem
   logic dcache_adapter_data_req, adapter_dcache_data_ack, adapter_dcache_rtrn_vld;
   dcache_req_t  dcache_adapter;
   dcache_rtrn_t adapter_dcache;
+
+  // invalidate requests from AXI bus
+  logic                   adapter_icache_inv_req;
+  logic [CVA6Cfg.PLEN-1:0] adapter_icache_inv_addr;
+  logic                   adapter_icache_inv_ack;
+  logic                   adapter_dcache_inv_req;
+  logic [CVA6Cfg.PLEN-1:0] adapter_dcache_inv_addr;
+  logic                   adapter_dcache_inv_ack;
 
   cva6_icache #(
       // use ID 0 for icache reads
@@ -133,6 +147,9 @@ module wt_cache_subsystem
       .areq_o        (icache_areq_o),
       .dreq_i        (icache_dreq_i),
       .dreq_o        (icache_dreq_o),
+      .mem_inv_req_i (adapter_icache_inv_req),
+      .mem_inv_addr_i(adapter_icache_inv_addr),
+      .mem_inv_ack_o (adapter_icache_inv_ack),
       .mem_rtrn_vld_i(adapter_icache_rtrn_vld),
       .mem_rtrn_i    (adapter_icache),
       .mem_data_req_o(icache_adapter_data_req),
@@ -169,6 +186,9 @@ module wt_cache_subsystem
       .req_ports_i     (dcache_req_ports_i),
       .req_ports_o     (dcache_req_ports_o),
       .miss_vld_bits_o (miss_vld_bits_o),
+      .mem_inv_req_i   (adapter_dcache_inv_req),
+      .mem_inv_addr_i  (adapter_dcache_inv_addr),
+      .mem_inv_ack_o   (adapter_dcache_inv_ack),
       .mem_rtrn_vld_i  (adapter_dcache_rtrn_vld),
       .mem_rtrn_i      (adapter_dcache),
       .mem_data_req_o  (dcache_adapter_data_req),
@@ -228,8 +248,16 @@ module wt_cache_subsystem
       .dcache_data_i    (dcache_adapter),
       .dcache_rtrn_vld_o(adapter_dcache_rtrn_vld),
       .dcache_rtrn_o    (adapter_dcache),
+      .icache_inv_req_o (adapter_icache_inv_req),
+      .icache_inv_addr_o(adapter_icache_inv_addr),
+      .icache_inv_ack_i (adapter_icache_inv_ack),
+      .dcache_inv_req_o (adapter_dcache_inv_req),
+      .dcache_inv_addr_o(adapter_dcache_inv_addr),
+      .dcache_inv_ack_i (adapter_dcache_inv_ack),
       .axi_req_o        (noc_req_o),
       .axi_resp_i       (noc_resp_i),
+      .ace_req_i        (ace_req_i),
+      .ace_resp_o       (ace_resp_o),
       .mbe_i            (mbe_i),
       .inval_addr_i     (inval_addr_i),
       .inval_valid_i    (inval_valid_i),

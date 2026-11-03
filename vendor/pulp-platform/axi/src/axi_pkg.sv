@@ -39,6 +39,8 @@ package axi_pkg;
   typedef logic [5:0] atop_t; // atomic operations
   /// AXI5 Non-Secure Address Identifier.
   typedef logic [3:0] nsaid_t;
+  // coherent transaction that requires snoop
+  typedef logic [3:0] snoop_t;
 
   /// In a fixed burst:
   /// - The address is the same for every transfer in the burst.
@@ -359,6 +361,18 @@ package axi_pkg;
   // Ussage eg: if (req_i.aw.atop[axi_pkg::ATOP_R_RESP]) begin
   localparam ATOP_R_RESP = 32'd5;
 
+  // ACE Snoop Types
+  localparam SNOOP_READONCE           = 4'b0000;
+  localparam SNOOP_READSHARED         = 4'b0001;
+  localparam SNOOP_READCLEAN          = 4'b0010;
+  localparam SNOOP_READNOTSHAREDDIRTY = 4'b0011;
+  localparam SNOOP_READUNIQUE         = 4'b0111;
+  localparam SNOOP_CLEANSHARED        = 4'b1000;
+  localparam SNOOP_CLEANINVALID       = 4'b1001;
+  localparam SNOOP_MAKEINVALID        = 4'b1101;
+  localparam SNOOP_DVMCOMPLETE        = 4'b1110;
+  localparam SNOOP_DVMMESSAGE         = 4'b1111;
+
   // `xbar_latency_e` and `xbar_cfg_t` are documented in `doc/axi_xbar.md`.
   /// Slice on Demux AW channel.
   localparam logic [9:0] DemuxAw = (1 << 9);
@@ -420,4 +434,12 @@ package axi_pkg;
     logic [31:0] start_addr;
     logic [31:0] end_addr;
   } xbar_rule_32_t;
+
+  // Snoop Address Channel (AC)
+   typedef struct packed {
+      logic [63:0]   addr;
+      prot_t   prot;
+      snoop_t  snoop;
+   } ac_chan_t;
+
 endpackage

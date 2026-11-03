@@ -71,6 +71,26 @@ package ariane_pkg;
   // amount of data count registers implemented
   localparam logic [3:0] DataCount = 4'h2;
 
+`ifdef PITON_ARIANE
+  // Floating-point extensions configuration
+  localparam bit RVF = 1'b1; // Is F extension enabled
+  localparam bit RVD = 1'b1; // Is D extension enabled
+`else
+  // Floating-point extensions configuration
+  localparam bit RVF = 1'b1; // Is F extension enabled
+  localparam bit RVD = 1'b1; // Is D extension enabled
+`endif
+
+  // Transprecision floating-point extensions configuration
+  localparam bit XF16    = 1'b0; // Is half-precision float extension (Xf16) enabled
+  localparam bit XF16ALT = 1'b0; // Is alternative half-precision float extension (Xf16alt) enabled
+  localparam bit XF8     = 1'b0; // Is quarter-precision float extension (Xf8) enabled
+  localparam bit XFVEC   = 1'b0; // Is vectorial float extension (Xfvec) enabled
+
+  // --------------------------------------
+  // vvvv Don't change these by hand! vvvv
+  localparam bit FP_PRESENT = RVF | RVD | XF16 | XF16ALT | XF8;
+
   // address where data0-15 is shadowed or if shadowed in a CSR
   // address of the first CSR used for shadowing the data
   localparam logic [11:0] DataAddr = 12'h380;  // we are aligned with Rocket here
@@ -684,6 +704,13 @@ package ariane_pkg;
     FE_INSTR_GUEST_PAGE_FAULT
   } frontend_exception_t;
 
+  typedef struct packed {
+    logic       dcs_en;
+    logic       use_owner_pred;
+    logic [1:0] dcs;
+    logic [3:0] cid;
+  } dcs_data_t;
+
   // AMO request going to cache. this request is unconditionally valid as soon
   // as request goes high.
   // Furthermore, those signals are kept stable until the response indicates
@@ -694,6 +721,8 @@ package ariane_pkg;
     logic [1:0]  size;       // 2'b10 --> word operation, 2'b11 --> double word operation
     logic [63:0] operand_a;  // address
     logic [63:0] operand_b;  // data as layouted in the register
+    logic        aq;
+    logic        rl;
   } amo_req_t;
 
   // AMO response coming from cache.

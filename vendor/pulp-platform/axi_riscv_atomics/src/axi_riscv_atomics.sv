@@ -161,6 +161,7 @@ module axi_riscv_atomics #(
     logic [AXI_ADDR_WIDTH-1:0]   int_axi_ar_addr;
     logic [2:0]                  int_axi_ar_prot;
     logic [3:0]                  int_axi_ar_region;
+    logic [5:0]                  int_axi_ar_atop;
     logic [7:0]                  int_axi_ar_len;
     logic [2:0]                  int_axi_ar_size;
     logic [1:0]                  int_axi_ar_burst;
@@ -265,6 +266,7 @@ module axi_riscv_atomics #(
         .mst_ar_addr_o      ( int_axi_ar_addr   ),
         .mst_ar_prot_o      ( int_axi_ar_prot   ),
         .mst_ar_region_o    ( int_axi_ar_region ),
+        .mst_ar_atop_o      ( int_axi_ar_atop   ),
         .mst_ar_len_o       ( int_axi_ar_len    ),
         .mst_ar_size_o      ( int_axi_ar_size   ),
         .mst_ar_burst_o     ( int_axi_ar_burst  ),
@@ -322,6 +324,7 @@ module axi_riscv_atomics #(
         .slv_ar_addr_i      ( int_axi_ar_addr   ),
         .slv_ar_prot_i      ( int_axi_ar_prot   ),
         .slv_ar_region_i    ( int_axi_ar_region ),
+        .slv_ar_atop_i      ( int_axi_ar_atop   ),
         .slv_ar_len_i       ( int_axi_ar_len    ),
         .slv_ar_size_i      ( int_axi_ar_size   ),
         .slv_ar_burst_i     ( int_axi_ar_burst  ),
@@ -374,7 +377,7 @@ module axi_riscv_atomics #(
         .mst_ar_cache_o     ( mst_ar_cache_o    ),
         .mst_ar_qos_o       ( mst_ar_qos_o      ),
         .mst_ar_id_o        ( mst_ar_id_o       ),
-        .mst_ar_user_o      ( mst_ar_user_o     ),
+        .mst_ar_user_o      (                   ),
         .mst_ar_ready_i     ( mst_ar_ready_i    ),
         .mst_ar_valid_o     ( mst_ar_valid_o    ),
         .mst_w_data_o       ( mst_w_data_o      ),
@@ -396,5 +399,7 @@ module axi_riscv_atomics #(
         .mst_b_ready_o      ( mst_b_ready_o     ),
         .mst_b_valid_i      ( mst_b_valid_i     )
     );
+
+    assign mst_ar_user_o = {4'b0, int_axi_ar_atop};
 
 endmodule

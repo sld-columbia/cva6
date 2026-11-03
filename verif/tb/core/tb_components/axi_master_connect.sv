@@ -28,7 +28,7 @@ module axi_master_connect (
     assign master.aw_qos        = dis_mem? '0 : axi_req_i.aw.qos;
     assign master.aw_atop       = dis_mem? '0 : axi_req_i.aw.atop;
     assign master.aw_region     = dis_mem? '0 : axi_req_i.aw.region;
-    assign master.aw_user       = dis_mem? '0 : '0;
+    assign master.aw_user       = dis_mem? '0 : axi_req_i.aw.user;
     assign master.aw_valid      = dis_mem? '0 : axi_req_i.aw_valid;
 
     assign master.w_data        = dis_mem? '0 : axi_req_i.w.data;
@@ -49,7 +49,7 @@ module axi_master_connect (
     assign master.ar_prot       = dis_mem? '0 : axi_req_i.ar.prot;
     assign master.ar_qos        = dis_mem? '0 : axi_req_i.ar.qos;
     assign master.ar_region     = dis_mem? '0 : axi_req_i.ar.region;
-    assign master.ar_user       = dis_mem? '0 : '0;
+    assign master.ar_user       = dis_mem? '0 : axi_req_i.ar.user;
     assign master.ar_valid      = dis_mem? '0 : axi_req_i.ar_valid;
 
     assign master.r_ready       = dis_mem? '0 : axi_req_i.r_ready;

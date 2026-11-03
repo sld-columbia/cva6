@@ -211,7 +211,9 @@ module wt_dcache_mem
       end
 
       if (|wr_req_i) begin
-        if (rd_tag_only_i[vld_sel_d] || !(rd_ack_o[vld_sel_d] && bank_collision[vld_sel_d])) begin
+        // If there is no accepted read this cycle, always allow the writeback.
+        // This avoids indexing with an undefined arbiter selection when no read request is present.
+        if (!rd_acked || rd_tag_only_i[vld_sel_d] || !(rd_ack_o[vld_sel_d] && bank_collision[vld_sel_d])) begin
           wr_ack_o = 1'b1;
           bank_req |= dcache_cl_bin2oh(
               wr_off_i[CVA6Cfg.DCACHE_OFFSET_WIDTH-1:CVA6Cfg.XLEN_ALIGN_BYTES]

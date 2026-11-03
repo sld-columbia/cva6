@@ -39,7 +39,8 @@ module axi_riscv_lrsc_wrap #(
         .AXI_ADDR_WIDTH (AXI_ADDR_WIDTH),
         .AXI_DATA_WIDTH (AXI_DATA_WIDTH),
         .AXI_ID_WIDTH   (AXI_ID_WIDTH),
-        .AXI_USER_WIDTH (AXI_USER_WIDTH)
+        .AXI_USER_WIDTH (AXI_USER_WIDTH),
+        .AXI_RISCV_AMOS_PRESENT(1'b0)
     ) i_lrsc (
         .clk_i           ( clk_i         ),
         .rst_ni          ( rst_ni        ),
@@ -60,6 +61,7 @@ module axi_riscv_lrsc_wrap #(
         .slv_ar_addr_i   ( slv.ar_addr   ),
         .slv_ar_prot_i   ( slv.ar_prot   ),
         .slv_ar_region_i ( slv.ar_region ),
+        .slv_ar_atop_i   ( '0            ),
         .slv_ar_len_i    ( slv.ar_len    ),
         .slv_ar_size_i   ( slv.ar_size   ),
         .slv_ar_burst_i  ( slv.ar_burst  ),
